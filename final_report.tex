@@ -64,7 +64,7 @@ prompt: a 24-config sampling-parameter sweep, self-consistency
 majority voting over $k$ rollouts, and GRPO LoRA fine-tuning of
 Qwen3-4B-Thinking-2507 on a Claude-filtered subset of the public
 set. We also moved inference from INT8 on one GPU to BF16 with vLLM
-tensor-parallel $=2$ on $2\times$ A40, which roughly $4\times$ed
+tensor-parallel $=2$ on $2\times$ A40, which roughly quadrupled
 throughput. The final private score is \textbf{0.699}, up $+0.184$
 absolute and $+36\%$ relative from the milestone. The LoRA adapter
 is public on HuggingFace at \texttt{k1mittal/cse151b-grpo-lora},
@@ -124,7 +124,7 @@ mid-solution.
 the final phase we moved to BF16 with vLLM tensor-parallel $=2$
 on $2\times$ NVIDIA A40 (46\,GB each). Qwen3-4B is only $\approx
 8$\,GB in BF16, so quantization was mostly dequant overhead, and
-sharding across two A40s roughly $4\times$ed throughput.
+the BF16$+$TP$=2$ move roughly quadrupled throughput.
 (5) \textbf{Evaluation:} a full pass over 943 private items at
 our final $k=3$ setting takes about four days, so we developed
 methods on a 44-item eval slice and submitted to the leaderboard
@@ -243,11 +243,14 @@ judger-normalized symbolic form, so that
 $\backslash\text{frac}\{1\}\{2\}$,
 $\backslash\text{dfrac}\{1\}\{2\}$ and $0.5$ collapse into one
 vote. Ties broke by first occurrence. On the eval slice the vote
-was identical to a single rollout (90 / 64.71 / 70.45).
-Items the model got right were already high-confidence; items it
-got wrong tended to agree on the same wrong answer. We dropped
-$k$ from 8 to 3 for the final private run --- eight times cheaper
-at the same expected accuracy on this slice.
+scored 90.0 / 64.71 / 70.45 (MCQ / free-form / overall): on
+free-form the modal answer matched a single rollout on every item,
+and on MCQ one item out of ten flipped versus the best single
+sample (within noise on a 10-item split). Items the model got right
+were already high-confidence; items it got wrong tended to agree on
+the same wrong answer. We dropped $k$ from 8 to 3 for the final
+private run --- about $2.7\times$ cheaper at the same expected
+accuracy on this slice.
 
 \paragraph{GRPO LoRA fine-tuning.}
 We tried GRPO \citep{shao2024deepseekmath} over a Claude-filtered
@@ -336,11 +339,11 @@ the full 943-item private set, which we treat as ground truth.
     each); vLLM tensor-parallel $=2$; BF16 weights. The milestone
     ran on one GPU under INT8 (BitsAndBytes); we switched because
     Qwen3-4B is only $\approx 8$\,GB in BF16 (quantization was
-    mostly dequant overhead) and sharding across two A40s raised
-    throughput from $\approx 175$ to $\approx 786$ output
+    mostly dequant overhead), and the move to BF16 with TP$=2$
+    raised throughput from $\approx 175$ to $\approx 786$ output
     tokens/second.
     \item \textbf{Wall-clock:} a full 943-item private run at
-    SC $k=3$ takes about 4 days ($\approx 17$ items/hour);
+    SC $k=3$ takes about 4 days ($\approx 10$ items/hour);
     GRPO training was $\approx 14$ hours (1 epoch, 561 steps).
     \item \textbf{Model:} \texttt{Qwen/Qwen3-4B-Thinking-2507}
     through vLLM with \texttt{dtype="bfloat16"},
@@ -397,7 +400,9 @@ small", not "we proved these methods do nothing".
 \end{table}
 
 \paragraph{Result 3 (negative): self-consistency was neutral.}
-At $k=8$ the vote was identical to a single rollout (70.45\%).
+At $k=8$ the vote scored 70.45\% overall: identical to the best
+single sample on free-form, with a 1-item MCQ swing
+($8/10 \to 9/10$) that we treat as noise on a 10-item split.
 Items the model gets right were already high-confidence; items
 it gets wrong tended to be wrong consistently across rollouts.
 We kept SC at $k=3$ as a cheap robustness check.
