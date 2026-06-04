@@ -4,22 +4,34 @@
 
 \documentclass{article}
 
-\PassOptionsToPackage{numbers, compress}{natbib}
-\usepackage[numbers,compress]{natbib}
+% if you need to pass options to natbib, use, e.g.:
+%     \PassOptionsToPackage{numbers, compress}{natbib}
+% before loading neurips_2026
 
-\usepackage[utf8]{inputenc}
+% The authors should use one of these tracks.
+% Before accepting by the NeurIPS conference, select one of the options below.
+% 0. "default" for submission
+\PassOptionsToPackage{numbers, compress}{natbib}
+\usepackage[main, final]{neurips_2026}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{microtype}      % microtypography
+\usepackage{xcolor}         % colors
+
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{mathtools}
 \usepackage{amsthm}
 \usepackage{float}
-\DeclareMathOperator{\R}{\mathbb{R}}
-\usepackage{microtype}
 \usepackage{graphicx}
 \usepackage{subcaption}
-\usepackage{booktabs}
-\usepackage{hyperref}
-\usepackage{xcolor, colortbl}
+\usepackage{colortbl}
+\DeclareMathOperator{\R}{\mathbb{R}}
 \definecolor{darkblue}{rgb}{0.19, 0.19, 0.62}
 \hypersetup{
   colorlinks = true,
@@ -28,22 +40,19 @@
   urlcolor   = darkblue,
 }
 
-\title{
-CSE 151B Final Report --- Team Name
-\\
-}
+\title{CSE 151B Final Report --- Team Name}
 
 \author{%
   Ketan Mittal \\
   Department of Data Science \\
   University of California, San Diego \\
   \texttt{k1mittal@ucsd.edu}
-  \and
+  \And
   Anirudh Annabathula \\
   Department of Data Science \\
   University of California, San Diego \\
   \texttt{aannabathula@ucsd.edu}
-  \and
+  \And
   Kaii Bijlani \\
   Department of Data Science \\
   University of California, San Diego \\
@@ -57,16 +66,21 @@ CSE 151B Final Report --- Team Name
 \begin{abstract}
 This is our final report for the CSE 151B Spring 2026 Math Reasoning
 Competition. The data is 1{,}126 public math problems (375 MCQ,
-751 free-form) and a 943-item private test set. The milestone got
-us to 0.515 on the private leaderboard with a grader-aware system
-prompt. For the final phase we added three methods on top of that
-prompt: a 24-config sampling-parameter sweep, self-consistency
-majority voting over $k$ rollouts, and GRPO LoRA fine-tuning of
+751 free-form) and a 943-item private test set, scored on Kaggle's
+two leaderboards: the public board uses the full \texttt{private.jsonl},
+and the private board is a hidden held-out subset that catches
+overfitting on \texttt{private.jsonl}. The milestone got us to
+0.515 public / 0.459 private with a grader-aware system prompt.
+For the final phase we added three methods on top of that prompt:
+a 24-config sampling-parameter sweep, self-consistency majority
+voting over $k$ rollouts, and GRPO LoRA fine-tuning of
 Qwen3-4B-Thinking-2507 on a Claude-filtered subset of the public
 set. We also moved inference from INT8 on one GPU to BF16 with vLLM
 tensor-parallel $=2$ on $2\times$ A40, which roughly quadrupled
-throughput. The final private score is \textbf{0.699}, up $+0.184$
-absolute and $+36\%$ relative from the milestone. The LoRA adapter
+throughput. The final submission scored \textbf{0.699} on the
+Kaggle public leaderboard (rank 42/105) and \textbf{0.627} on the
+held-out private leaderboard (rank 27/105), up $+0.184$/$+0.168$
+absolute and $+36\%$/$+37\%$ relative from the milestone. The LoRA adapter
 is public on HuggingFace at \texttt{k1mittal/cse151b-grpo-lora},
 and the whole pipeline runs from \texttt{run\_inference()} in
 \texttt{run\_inference.py}. The sampling sweep was the biggest
@@ -137,8 +151,8 @@ loading, MCQ and free-form prompts, batched generation, and scoring.
 The first thing we added (reported in the milestone) was a
 grader-aware system prompt that respects the judger's parsing rules
 --- exact symbolic form, single boxed group --- which took us to
-0.515 on the private leaderboard. The rest of our work sits on top
-of that prompt.
+0.515 public / 0.459 private on the Kaggle leaderboards. The rest
+of our work sits on top of that prompt.
 
 \begin{itemize}
   \item \textbf{Contribution A (milestone):} a grader-aware system
@@ -150,7 +164,9 @@ of that prompt.
   \citep{shao2024deepseekmath} LoRA fine-tuning on a
   Claude-filtered subset of the public set. Together with the move
   from INT8 on one GPU to BF16 with vLLM tensor-parallel $=2$ on
-  $2\times$A40, these took our private score from 0.515 to 0.699.
+  $2\times$A40, these took our Kaggle public score from 0.515 to
+  0.699 (rank 42/105) and our private score from 0.459 to 0.627
+  (rank 27/105).
   \item \textbf{Contribution C (final):} one reproducible entry
   point, \texttt{run\_inference()} in \texttt{run\_inference.py},
   that loads the base model, downloads the LoRA adapter from
@@ -298,10 +314,12 @@ We fixed \texttt{run\_inference.py} to clamp \texttt{max\_tokens}
 to the remaining context budget (and skip the item if fewer than
 256 tokens are left) and re-ran those 10 items. The final CSV has
 943 rows, 0 empty, 0 errors, and scored \textbf{0.699} on the
-private leaderboard. We also tried a longer-reasoning variant
-(\texttt{max\_tokens} $=16{,}384$, \texttt{max\_model\_len}
-$=49{,}152$); it scored 0.692 on the leaderboard, slightly worse,
-so we did not adopt it. Qwen3-4B-Thinking-2507 supports
+Kaggle public leaderboard (rank 42/105) and \textbf{0.627} on the
+held-out private leaderboard (rank 27/105). We also tried a
+longer-reasoning variant (\texttt{max\_tokens} $=16{,}384$,
+\texttt{max\_model\_len} $=49{,}152$); it scored 0.692 public /
+0.612 private on the leaderboards, slightly worse, so we did not
+adopt it. Qwen3-4B-Thinking-2507 supports
 262{,}144 tokens natively, so KV cache was not the binding
 constraint; the free-form ceiling we are hitting is a
 reasoning-quality limit, not a token-budget limit.
@@ -315,8 +333,8 @@ reasoning-quality limit, not a token-budget limit.
 Our baseline is the milestone pipeline: Qwen3-4B-Thinking-2507
 under INT8 on a single GPU, the grader-aware system prompt, and
 the Qwen-recommended sampling defaults. That baseline scored
-0.515 on the private leaderboard, and every later number we
-report is a delta on top of that. We do not include simpler
+0.515 public / 0.459 private on the Kaggle leaderboards, and
+every later number we report is a delta on top of that. We do not include simpler
 models like a multi-layer perceptron or linear regression as
 baselines, because they cannot do free-form math reasoning over
 natural-language problem statements in any meaningful way.
@@ -328,9 +346,13 @@ made sense at this stage.
 We score with the provided judger: \texttt{Judger.auto\_judge}
 for free-form items, exact-letter match for MCQ items. For fast
 method development we use the 44-item eval slice from Section
-\ref{sec:methods} (10 MCQ, 34 free-form). For each submitted
-variant we also report the Kaggle private-leaderboard score on
-the full 943-item private set, which we treat as ground truth.
+\ref{sec:methods} (10 MCQ, 34 free-form). Kaggle reports two
+leaderboard scores: the public leaderboard evaluates submissions
+on the full 943-item \texttt{private.jsonl} set, and the private
+leaderboard evaluates on a separate held-out subset we never see
+(designed to catch overfitting on \texttt{private.jsonl}). The
+public board is what we monitored during development; the private
+board is the post-deadline reveal.
 
 \subsection{Implementation details}
 \label{sec:implementation_details}
@@ -370,11 +392,16 @@ the full 943-item private set, which we treat as ground truth.
 \subsection{Results}
 \label{sec:results}
 
-\paragraph{Result 1: 0.515 to 0.699 on the private leaderboard.}
-That is $+0.184$ absolute or $+36\%$ relative. The sampling sweep
-was the biggest contribution; self-consistency and the GRPO
-adapter were both neutral on the eval slice (Results 2 and 3);
-the longer-reasoning ablation was slightly worse (Result 4).
+\paragraph{Result 1: 0.515 $\to$ 0.699 public, 0.459 $\to$ 0.627 private.}
+The final submission scored 0.699 on the Kaggle public leaderboard
+(rank 42/105) and 0.627 on the held-out private leaderboard
+(rank 27/105), $+0.184$/$+0.168$ absolute and $+36\%$/$+37\%$
+relative from the milestone. The 15-place rank jump from public
+(42) to private (27) suggests the pipeline generalized rather than
+overfit \texttt{private.jsonl}. The sampling sweep was the biggest
+contribution; self-consistency and the GRPO adapter were both
+neutral on the eval slice (Results 3 and 4); the longer-reasoning
+ablation was slightly worse (Result 5).
 
 \paragraph{Result 2: per-method eval-slice accuracy.}
 Table \ref{tab:eval-slice} reports each stage of the pipeline on
@@ -416,16 +443,18 @@ because validation showed no regression.
 
 \paragraph{Result 5 (negative): more reasoning room did not help.}
 The longer-reasoning ablation (\texttt{max\_tokens} $=16{,}384$,
-\texttt{max\_model\_len} $=49{,}152$) scored 0.692, slightly
-worse than 0.699. KV cache was not the binding constraint, so
-the free-form ceiling looks like a reasoning-quality limit, not
-a token-budget limit.
+\texttt{max\_model\_len} $=49{,}152$) scored 0.692 public / 0.612
+private, slightly worse than the adopted submission's 0.699 / 0.627
+on both boards. KV cache was not the binding constraint, so the
+free-form ceiling looks like a reasoning-quality limit, not a
+token-budget limit.
 
 
 \section{Discussion}
 \label{sec:discussion}
-We started the final phase from 0.515 on the private leaderboard
-and ended at 0.699 ($+36\%$ relative). The rest of this section
+We started the final phase from 0.515 public / 0.459 private and
+ended at 0.699 public (rank 42/105) / 0.627 private (rank 27/105),
+$+36\%$/$+37\%$ relative. The rest of this section
 covers what worked, what did not, and what we would try next.
 
 \paragraph{Achievements.}
@@ -443,8 +472,8 @@ final phase. Self-consistency at $k=8$ and the GRPO adapter were
 both neutral on our eval slice; we kept them for robustness.
 The persistent bottleneck is free-form accuracy, which sat at
 $\approx 65\%$ on the eval slice through every layer. The
-longer-reasoning ablation (0.692 vs.\ 0.699) shows the issue is
-not truncation. A 4B-parameter thinking model at our compute
+longer-reasoning ablation (0.692 / 0.612 vs.\ 0.699 / 0.627) shows
+the issue is not truncation. A 4B-parameter thinking model at our compute
 budget probably did not have enough headroom for RL to close
 that gap on harder derivation-style items.
 
@@ -489,7 +518,7 @@ it underperformed, so it was dropped.
     \item \textbf{Week 3:} Read \texttt{judger.py}; identified the
     $10^{-8}$ tolerance and contiguous-boxed-group behaviors.
     \item \textbf{Week 4:} Drafted the grader-aware system prompt
-    on a 20-question dev subset; first private submission (0.515).
+    on a 20-question dev subset; first Kaggle submission (0.515 public / 0.459 private).
     \item \textbf{Week 5:} Submitted milestone report.
     \item \textbf{Week 6:} Moved inference to BF16 + vLLM TP=2 on
     $2\times$A40; ran the 24-config sampling sweep.
@@ -499,11 +528,13 @@ it underperformed, so it was dropped.
     filter; produced \texttt{public\_filtered.jsonl}.
     \item \textbf{Week 9:} Ran GRPO LoRA training
     ($\approx 14$ hours, 561 steps); fixed two engineering issues;
-    uploaded the adapter to \texttt{k1mittal/cse151b-grpo-lora}.
-    \item \textbf{Week 10:} Full 943-item private run with
-    SC $k=3$ + GRPO adapter; caught and fixed the
-    context-budget bug; submitted 0.699; ran the longer-reasoning
-    ablation (0.692, not submitted); wrote up the final report.
+    uploaded the adapter to \texttt{k1mittal/cse151b-grpo-lora};
+    ran the full 943-item private run with SC $k=3$ + GRPO adapter;
+    caught and fixed the context-budget bug; final submission scored
+    0.699 public (rank 42/105) / 0.627 private (rank 27/105); ran
+    the longer-reasoning ablation (0.692 public / 0.612 private,
+    not selected).
+    \item \textbf{Week 10:} Wrote up the final report.
 \end{itemize}
 
 
