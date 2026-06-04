@@ -66,11 +66,12 @@
 \begin{abstract}
 This is our final report for the CSE 151B Spring 2026 Math Reasoning
 Competition. The data is 1{,}126 public math problems (375 MCQ,
-751 free-form) and a 943-item private test set, scored on Kaggle's
-two leaderboards: the public board uses the full \texttt{private.jsonl},
-and the private board is a hidden held-out subset that catches
-overfitting on \texttt{private.jsonl}. The milestone got us to
-0.515 public / 0.459 private with a grader-aware system prompt.
+751 free-form) and a 943-item private test set. Kaggle has two
+boards: the public board scores on all of \texttt{private.jsonl},
+and the private board scores on a separate hidden subset (revealed
+at the deadline) that catches overfitting on \texttt{private.jsonl}.
+The milestone got us to 0.515 public / 0.459 private with a
+grader-aware system prompt.
 For the final phase we added three methods on top of that prompt:
 a 24-config sampling-parameter sweep, self-consistency majority
 voting over $k$ rollouts, and GRPO LoRA fine-tuning of
@@ -78,9 +79,9 @@ Qwen3-4B-Thinking-2507 on a Claude-filtered subset of the public
 set. We also moved inference from INT8 on one GPU to BF16 with vLLM
 tensor-parallel $=2$ on $2\times$ A40, which roughly quadrupled
 throughput. The final submission scored \textbf{0.699} on the
-Kaggle public leaderboard (rank 42/105) and \textbf{0.627} on the
-held-out private leaderboard (rank 27/105), up $+0.184$/$+0.168$
-absolute and $+36\%$/$+37\%$ relative from the milestone. The LoRA adapter
+public board (rank 42/105) and \textbf{0.627} on the private
+board (rank 27/105), up $+0.184$/$+0.168$ absolute and
+$+36\%$/$+37\%$ relative from the milestone. The LoRA adapter
 is public on HuggingFace at \texttt{k1mittal/cse151b-grpo-lora},
 and the whole pipeline runs from \texttt{run\_inference()} in
 \texttt{run\_inference.py}. The sampling sweep was the biggest
@@ -294,7 +295,7 @@ reward that gave us many all-same groups with zero advantage. We
 kept the adapter in the final pipeline because validation showed
 no regression.
 
-Two engineering issues stalled training and are worth noting.
+Two engineering issues stalled training.
 \texttt{peft 0.19} tries to import \texttt{EmbeddingParallel}
 from \texttt{transformers 4.57}, which no longer exports it; we
 aliased it to \texttt{ReplicateParallel} at import time. An NCCL
@@ -314,8 +315,8 @@ We fixed \texttt{run\_inference.py} to clamp \texttt{max\_tokens}
 to the remaining context budget (and skip the item if fewer than
 256 tokens are left) and re-ran those 10 items. The final CSV has
 943 rows, 0 empty, 0 errors, and scored \textbf{0.699} on the
-Kaggle public leaderboard (rank 42/105) and \textbf{0.627} on the
-held-out private leaderboard (rank 27/105). We also tried a
+public board (rank 42/105) and \textbf{0.627} on the private board
+(rank 27/105). We also tried a
 longer-reasoning variant (\texttt{max\_tokens} $=16{,}384$,
 \texttt{max\_model\_len} $=49{,}152$); it scored 0.692 public /
 0.612 private on the leaderboards, slightly worse, so we did not
@@ -346,13 +347,11 @@ made sense at this stage.
 We score with the provided judger: \texttt{Judger.auto\_judge}
 for free-form items, exact-letter match for MCQ items. For fast
 method development we use the 44-item eval slice from Section
-\ref{sec:methods} (10 MCQ, 34 free-form). Kaggle reports two
-leaderboard scores: the public leaderboard evaluates submissions
-on the full 943-item \texttt{private.jsonl} set, and the private
-leaderboard evaluates on a separate held-out subset we never see
-(designed to catch overfitting on \texttt{private.jsonl}). The
-public board is what we monitored during development; the private
-board is the post-deadline reveal.
+\ref{sec:methods} (10 MCQ, 34 free-form). Kaggle has two boards. The public board scores submissions on all
+943 items of \texttt{private.jsonl} --- this is what we watched
+during the competition. The private board scores on a separate
+hidden subset we never see, revealed only at the deadline to catch
+teams that overfit \texttt{private.jsonl}.
 
 \subsection{Implementation details}
 \label{sec:implementation_details}
@@ -393,12 +392,11 @@ board is the post-deadline reveal.
 \label{sec:results}
 
 \paragraph{Result 1: 0.515 $\to$ 0.699 public, 0.459 $\to$ 0.627 private.}
-The final submission scored 0.699 on the Kaggle public leaderboard
-(rank 42/105) and 0.627 on the held-out private leaderboard
-(rank 27/105), $+0.184$/$+0.168$ absolute and $+36\%$/$+37\%$
-relative from the milestone. The 15-place rank jump from public
-(42) to private (27) suggests the pipeline generalized rather than
-overfit \texttt{private.jsonl}. The sampling sweep was the biggest
+The final submission scored 0.699 on the public board (rank 42/105)
+and 0.627 on the private board (rank 27/105), $+0.184$/$+0.168$
+absolute and $+36\%$/$+37\%$ relative from the milestone. Rank
+went from 42 (public) to 27 (private), a +15-place jump --- we
+did not overfit \texttt{private.jsonl}. The sampling sweep was the biggest
 contribution; self-consistency and the GRPO adapter were both
 neutral on the eval slice (Results 3 and 4); the longer-reasoning
 ablation was slightly worse (Result 5).
