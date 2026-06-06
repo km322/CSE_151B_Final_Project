@@ -72,6 +72,7 @@ and the private board scores on a separate hidden subset (revealed
 at the deadline) that catches overfitting on \texttt{private.jsonl}.
 The milestone got us to 0.515 public / 0.459 private with a
 grader-aware system prompt.
+
 For the final phase we added three methods on top of that prompt:
 a 24-config sampling-parameter sweep, self-consistency majority
 voting over $k$ rollouts, and GRPO LoRA fine-tuning of
@@ -81,14 +82,17 @@ tensor-parallel $=2$ on $2\times$ A40, which roughly quadrupled
 throughput. The final submission scored \textbf{0.699} on the
 public board (rank 42/105) and \textbf{0.627} on the private
 board (rank 27/105), up $+0.184$/$+0.168$ absolute and
-$+36\%$/$+37\%$ relative from the milestone. The LoRA adapter
-is public on HuggingFace at \texttt{k1mittal/cse151b-grpo-lora},
-and the whole pipeline runs from \texttt{run\_inference()} in
-\texttt{run\_inference.py}. The sampling sweep was the biggest
+$+36\%$/$+37\%$ relative from the milestone.
+
+The sampling sweep was the biggest
 gain, and self-consistency and GRPO were both flat on our 44-item
 eval slice --- we kept them for robustness rather than measured
 gains. Free-form accuracy sat near $65\%$ across every method we
-tried, and that is the bottleneck we did not move.
+tried, and that is the bottleneck we did not move. The LoRA adapter
+is public on HuggingFace at \texttt{k1mittal/cse151b-grpo-lora},
+and the whole pipeline runs from \texttt{run\_inference()} in
+\texttt{run\_inference.py}. Code is at
+\href{https://github.com/km322/CSE_151B_Final_Project}{\texttt{github.com/km322/CSE\_151B\_Final\_Project}}.
 \end{abstract}
 
 
@@ -177,7 +181,7 @@ of our work sits on top of that prompt.
 \end{itemize}
 
 
-\section{Related Work (Optional)}
+\section{Related Work}
 \label{sec:relatedwork}
 
 \paragraph{LLMs for mathematical reasoning.}
@@ -238,6 +242,45 @@ ambiguous by hand. The slice is 10 MCQ and 34 free-form. Every
 method below is measured on the same slice; the leaderboard is
 the ground truth.
 
+\paragraph{Idea Summary.}
+The milestone's grader-aware prompt was already doing most of
+the format work, so we kept it and added three things on top of
+it for the final phase: (a) a 24-config sweep over sampling
+parameters; (b) self-consistency voting over $k$ rollouts; and
+(c) a GRPO LoRA adapter trained on a Claude-filtered subset of
+the public set. Each layer targets a different failure mode ---
+the decoding distribution, per-question variance, and the policy
+itself --- so any one can be dropped without breaking the rest.
+The main risk for this design was that the layers would fail to
+stack: SC tends to add less once sampling is already sharp, and
+a single epoch of GRPO on a 4B policy might not move accuracy at
+all. Our fallback if GRPO came back flat was to ship swept
+sampler $+$ SC at the smallest $k$ that still gave coverage ---
+which is what ended up happening.
+
+\paragraph{Method Description.}
+We describe each of the three layers in turn. The model still
+receives the raw question (and the option list for MCQ items)
+and emits text whose final boxed group the judger parses; we do
+not pre- or post-process either side beyond what the judger does
+itself. The sampling-sweep and self-consistency layers do not
+learn parameters, so they need no train/val split; the full
+Claude-filtered public set is the dev pool for GRPO.
+Figure \ref{fig:pipeline} sketches the final inference pipeline.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\textwidth]{fig_pipeline.png}
+  \caption{Final inference pipeline. The question (and option list,
+  if any) is wrapped in the milestone's grader-aware system prompt
+  and decoded by Qwen3-4B-Thinking-2507 under vLLM (BF16, TP$=2$
+  on $2\times$ A40) with the GRPO LoRA adapter active. Sampling
+  parameters are pinned from the 24-config sweep. We draw $k=3$
+  rollouts and the sympy-normalized majority vote is scored by
+  \texttt{judger.py}.}
+  \label{fig:pipeline}
+\end{figure}
+
 \paragraph{Sampling parameter sweep.}
 We swept temperature $\in \{0.3, 0.6, 0.9\}$,
 $\text{top\_p} \in \{0.8, 0.95\}$, $\text{top\_k} \in \{0, 20\}$
@@ -251,7 +294,20 @@ Qwen-recommended \texttt{(T=0.6, top\_p=0.95, top\_k=20, min\_p=0)}
 tied at $68.18\%$. \texttt{top\_k} barely mattered, and
 \texttt{min\_p=0.05} consistently hurt free-form. We pinned the
 recommended setting for everything after. This was the biggest
-gain in the final phase.
+gain in the final phase. Figure \ref{fig:sweep} shows the full
+24-cell landscape.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\textwidth]{fig_sweep.png}
+  \caption{24-configuration sampling sweep on the 44-item eval
+  slice. Cells are overall accuracy ($\%$); the two tied winners
+  at $68.18\%$ (both at $T{=}0.6$, $\text{top\_p}{=}0.95$,
+  $\text{min\_p}{=}0$, with $\text{top\_k}\in\{0,20\}$) are
+  outlined. Temperature is the dominant axis: 0.9 is consistently
+  worst, and \texttt{min\_p}$=0.05$ hurts the high-temp column.}
+  \label{fig:sweep}
+\end{figure}
 
 \paragraph{Self-consistency.}
 For each item we ran $k=8$ independent rollouts and voted: for
@@ -271,7 +327,7 @@ accuracy on this slice.
 
 \paragraph{GRPO LoRA fine-tuning.}
 We tried GRPO \citep{shao2024deepseekmath} over a Claude-filtered
-subset of the public set (1{,}123 of 1{,}126 items, dropping the
+subset of the public set (1{,}113 of 1{,}126 items, dropping the
 ones Claude flagged as wrong or ambiguous). Policy was
 Qwen3-4B-Thinking-2507 loaded in 4-bit nf4 with a LoRA adapter
 (rank 16, $\alpha=32$, dropout 0, target modules
@@ -288,21 +344,17 @@ $1\times 10^{-6}$, KL $\beta=0.04$, \texttt{num\_generations}$=4$
 $1$ with gradient accumulation $4$, one epoch (561 steps,
 $\approx 14$ hours on $2\times$ A40). On the eval slice the GRPO
 adapter scored $70.45\%$, identical to base $+$ SC.
-Probable causes: one low-LR epoch; group size $4$ instead of
-$8$--$16$ from the recipe, which inflates advantage variance;
-completions truncated at $2{,}048$ tokens; and a sparse $0/1$
-reward that gave us many all-same groups with zero advantage. We
-kept the adapter in the final pipeline because validation showed
-no regression.
+Probable causes: one low-LR epoch, group size $4$ instead of the
+$8$--$16$ used in the published recipes, completions truncated at
+$2{,}048$ tokens, and a sparse $0/1$ reward. We kept the adapter
+in the final pipeline because validation showed no regression.
 
-Two engineering issues stalled training.
-\texttt{peft 0.19} tries to import \texttt{EmbeddingParallel}
-from \texttt{transformers 4.57}, which no longer exports it; we
-aliased it to \texttt{ReplicateParallel} at import time. An NCCL
-timeout also silently hung training for $\approx 28$ hours, so
-we added a log-growth watchdog that kills the process after 15
-minutes with no step-advance and wrapped the loop in a
-resume-from-latest-checkpoint retry.
+Two engineering issues stalled training. A version mismatch
+between \texttt{peft 0.19} and \texttt{transformers 4.57} broke
+the import path; we patched it at load time. An NCCL timeout
+also silently hung training for $\approx 28$ hours, so we added
+a watchdog that kills the process after 15 minutes with no
+step-advance and resumes from the latest checkpoint.
 
 \paragraph{Final pipeline and a bug we caught.}
 The submitted pipeline is self-consistency $k=3$ $+$ the
@@ -391,26 +443,82 @@ teams that overfit \texttt{private.jsonl}.
 \subsection{Results}
 \label{sec:results}
 
-\paragraph{Result 1: 0.515 $\to$ 0.699 public, 0.459 $\to$ 0.627 private.}
-The final submission scored 0.699 on the public board (rank 42/105)
-and 0.627 on the private board (rank 27/105), $+0.184$/$+0.168$
-absolute and $+36\%$/$+37\%$ relative from the milestone. Rank
-went from 42 (public) to 27 (private), a +15-place jump --- we
-did not overfit \texttt{private.jsonl}. The sampling sweep was the biggest
-contribution; self-consistency and the GRPO adapter were both
-neutral on the eval slice (Results 3 and 4); the longer-reasoning
-ablation was slightly worse (Result 5).
+\paragraph{Result 1: $0.515 \to 0.699$ public and $0.459 \to 0.627$ private on the Kaggle leaderboard.}
+Our submitted pipeline scored \textbf{0.699} on the public board
+(rank $42/105$) and \textbf{0.627} on the private board
+(rank $27/105$): $+0.184$/$+0.168$ absolute and $+36\%$/$+37\%$
+relative over the milestone. Rank rose from $42$ public to $27$
+private, a $+15$-place jump --- if the layered pipeline had
+overfit \texttt{private.jsonl} we would expect rank to drop on
+the hidden subset, not improve. All 943 private items came back
+with 0 empty rows and 0 errors once we caught the context-budget
+bug in Section \ref{sec:methods}. We also submitted a second
+pipeline as a sanity check (longer reasoning budget, everything
+else fixed) which scored $0.692$ / $0.612$, slightly below the
+adopted run on both boards; the full comparison is in the
+reasoning-budget ablation, Section \ref{sec:ablations}.
+Figure \ref{fig:leaderboard} shows the milestone-to-final
+progression on the private board.
 
-\paragraph{Result 2: per-method eval-slice accuracy.}
-Table \ref{tab:eval-slice} reports each stage of the pipeline on
-the same 44-item eval slice. The flatness of the last two rows
-should be read as "no signal we can resolve on a slice this
-small", not "we proved these methods do nothing".
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.75\textwidth]{fig_leaderboard.png}
+  \caption{Private-leaderboard progression from the milestone
+  submission (INT8, 1 GPU; 0.515 public / 0.459 private) to the
+  final submission (BF16 $+$ TP$=2$ $+$ sweep $+$ SC $k{=}3$ $+$
+  GRPO LoRA; 0.699 / 0.627), $+0.184$ absolute on the public
+  board ($+36\%$ relative). The longer-context ablation submission
+  ($0.692$ / $0.612$) is included for reference but was not
+  adopted.}
+  \label{fig:leaderboard}
+\end{figure}
+
+\paragraph{Result 2: $\approx 4.5\times$ inference throughput from INT8 ($1\times$ GPU) to BF16 $+$ vLLM TP$=2$ ($2\times$ A40).}
+The milestone pipeline ran Qwen3-4B-Thinking-2507 under INT8
+(BitsAndBytes) on a single GPU at $\approx 175$ output
+tokens/second. Switching to BF16 weights with vLLM
+tensor-parallel $=2$ on $2\times$ A40 raised throughput to
+$\approx 786$ tokens/second, roughly $4.5\times$. The reason
+quantization was a loss rather than a win is that Qwen3-4B is
+only $\approx 8\,$GB in BF16 --- well within a single A40's
+$46\,$GB --- so the INT8 path spent most of its budget on
+dequantization overhead with no memory headroom to gain. This
+change is what made the rest of the final phase tractable: at the
+milestone's $\approx 175$ tok/s, a single full-private run at
+$k=3$ would have taken $\approx 17$ days instead of the $\approx
+4$ it actually took, and we would not have had wall-clock to fit
+the sampling sweep, the SC study, and a GRPO training run on top
+of it. Figure \ref{fig:throughput} shows the two operating points.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.55\textwidth]{fig_throughput.png}
+  \caption{Output throughput at the milestone (INT8, single A40)
+  vs.\ the final pipeline (BF16, vLLM tensor-parallel $=2$ on
+  $2\times$ A40), measured during full-private runs. The
+  $\approx 4.5\times$ speedup is what made the 24-config sweep, the
+  SC study, and one full epoch of GRPO fit in our final-phase
+  wall-clock budget.}
+  \label{fig:throughput}
+\end{figure}
+
+
+\subsection{Ablations}
+\label{sec:ablations}
+We isolate the contribution of each component of the final
+pipeline by removing or replacing it while holding everything else
+fixed. All numbers below are on the 44-item eval slice from
+Section \ref{sec:methods} ($10$ MCQ, $34$ free-form), with the
+same sampling settings, seeds, and prompt across rows. Table
+\ref{tab:eval-slice} gives the layer-by-layer breakdown; the
+paragraphs after it isolate each layer in more detail.
 
 \begin{table}[h]
-  \caption{Accuracy on the 44-item eval slice. All rows use
-  Qwen3-4B-Thinking-2507 under BF16 + vLLM TP=2 with
-  \texttt{(T=0.6, top\_p=0.95, top\_k=20, min\_p=0)}.}
+  \caption{Layer-by-layer ablation of the final pipeline on the
+  44-item eval slice. All rows use Qwen3-4B-Thinking-2507 under
+  BF16 $+$ vLLM TP$=2$ with
+  \texttt{(T=0.6, top\_p=0.95, top\_k=20, min\_p=0)}. Each row
+  adds one layer to the row above.}
   \label{tab:eval-slice}
   \centering
   \begin{tabular}{lccc}
@@ -424,28 +532,37 @@ small", not "we proved these methods do nothing".
   \end{tabular}
 \end{table}
 
-\paragraph{Result 3 (negative): self-consistency was neutral.}
-At $k=8$ the vote scored 70.45\% overall: identical to the best
-single sample on free-form, with a 1-item MCQ swing
-($8/10 \to 9/10$) that we treat as noise on a 10-item split.
-Items the model gets right were already high-confidence; items
-it gets wrong tended to be wrong consistently across rollouts.
-We kept SC at $k=3$ as a cheap robustness check.
+\paragraph{Self-consistency size ablation.}
+At $k=8$ the vote scored $70.45\%$ overall, identical to the best
+single sample on free-form, with a 1-item MCQ swing ($8/10 \to
+9/10$) that we treat as noise on a 10-item split. Items the model
+gets right were already high-confidence; items it gets wrong
+tended to be wrong consistently across rollouts. We dropped $k$
+from $8$ to $3$ in the final pipeline --- about $2.7\times$
+cheaper at the same expected accuracy on this slice --- and kept
+SC as a cheap robustness check rather than a measured gain. The
+flatness should be read as ``no signal we can resolve on a slice
+this small,'' not ``we proved SC does nothing.''
 
-\paragraph{Result 4 (negative): GRPO was neutral too.}
-On the eval slice the GRPO adapter also scored 70.45\%. Probable
-causes are listed in Section \ref{sec:methods}: one low-LR epoch,
-group size 4 instead of 8--16, truncated 2{,}048-token
-completions, and a sparse 0/1 reward. We kept the adapter
-because validation showed no regression.
+\paragraph{GRPO adapter ablation.}
+On the eval slice the GRPO adapter scored $70.45\%$, identical to
+SC alone. Probable causes are listed in Section \ref{sec:methods}:
+one low-learning-rate epoch, group size $4$ instead of the
+$8$--$16$ from the published recipes, completions truncated at
+$2{,}048$ tokens, and a sparse $0/1$ reward. We kept the adapter
+in the final pipeline because validation showed no regression on
+either the eval slice or the Kaggle leaderboards.
 
-\paragraph{Result 5 (negative): more reasoning room did not help.}
-The longer-reasoning ablation (\texttt{max\_tokens} $=16{,}384$,
-\texttt{max\_model\_len} $=49{,}152$) scored 0.692 public / 0.612
-private, slightly worse than the adopted submission's 0.699 / 0.627
-on both boards. KV cache was not the binding constraint, so the
-free-form ceiling looks like a reasoning-quality limit, not a
-token-budget limit.
+\paragraph{Reasoning-budget ablation.}
+We doubled the context budget (\texttt{max\_tokens}
+$=16{,}384$, \texttt{max\_model\_len} $=49{,}152$) and re-ran the
+final pipeline end-to-end, leaving everything else fixed. The
+variant scored $0.692$ public / $0.612$ private --- $-0.007$ on
+the public board against the adopted submission's $0.699$. Both
+setups use less than $20\%$ of Qwen3-4B-Thinking-2507's
+$262{,}144$-token native window, so the KV cache was not the
+binding constraint. The wall we are hitting is reasoning
+quality, not tokens.
 
 
 \section{Discussion}
@@ -462,77 +579,60 @@ LoRA adapter is on HuggingFace Hub at
 \texttt{k1mittal/cse151b-grpo-lora}, so verification does not
 need any local model files. The full 943-item private run
 completed with zero empty or errored items after we caught and
-fixed the context-budget bug in Section \ref{sec:methods}.
+fixed the context-budget bug in Section \ref{sec:methods}. On the
+eval slice the model's strongest split is MCQ, where the
+SC $+$ GRPO pipeline reaches $90\%$ (Table \ref{tab:eval-slice}).
 
 \paragraph{Bottlenecks and Mitigation.}
 The sampling sweep was the largest single contribution in the
-final phase. Self-consistency at $k=8$ and the GRPO adapter were
-both neutral on our eval slice; we kept them for robustness.
-The persistent bottleneck is free-form accuracy, which sat at
-$\approx 65\%$ on the eval slice through every layer. The
-longer-reasoning ablation (0.692 / 0.612 vs.\ 0.699 / 0.627) shows
-the issue is not truncation. A 4B-parameter thinking model at our compute
-budget probably did not have enough headroom for RL to close
-that gap on harder derivation-style items.
+final phase; SC at $k=8$ and the GRPO adapter were both flat on
+the eval slice and we kept them for robustness. The persistent
+bottleneck is free-form accuracy, which stayed near $65\%$
+through every layer. Inside the free-form split, multi-answer
+items (questions wanting a list of values rather than a single
+value) were the weakest subset across every method we tried;
+our general prompt was not specialized for those items. The
+reasoning-budget ablation (Section \ref{sec:ablations}) rules
+out token budget as the cause: the wall is reasoning quality,
+not tokens. We also did not get through every idea on our list
+because of time constraints. From the milestone plan we
+deviated in three places: we moved inference from INT8 on one
+GPU to BF16 with vLLM TP$=2$ for throughput; we tested SC at
+$k=8$ rather than the planned $k\in\{3,5\}$, found no gain, and
+shipped $k=3$ for cost; and GRPO ran with reduced group size
+and shorter completions because of single-box memory.
 
-\paragraph{Plans Forward.}
-The clearest place to push next is the free-form ceiling.
+\paragraph{Lessons Learned.}
 \begin{itemize}
-    \item Better verifiers / weighted voting --- use a stronger
-    reward model to weight self-consistency votes instead of
-    naive majority.
-    \item A denser reward for GRPO. The 0/1 judger reward is
-    sparse and item-level; a process- or step-level reward might
-    give the policy more signal per group.
-    \item More GRPO compute with larger groups
-    (\texttt{num\_generations} $\geq 8$) and longer completions,
-    to match the published recipes more faithfully than our
-    memory-constrained single-box run.
+    \item \textbf{Run small eval chunks before full runs.}
+    Running each change on a small chunk of the public set first
+    gave us a clean read on whether the change was actually
+    helping the model, without paying for a full-private run on
+    every experiment.
+    \item \textbf{Use overnight runs to parallelize work.}
+    Wrapping the notebook in bash scripts and letting it run
+    overnight on the remote server meant we could keep
+    experiments going in the background while we worked on
+    other things, which gave us back a lot of wall-clock time.
+    \item \textbf{If given more time.} (i) Use the model's
+    context tokens better and write prompts that target the
+    multi-select questions specifically, where our general
+    prompt left accuracy on the table; (ii) augment GRPO
+    fine-tuning with NVIDIA's Nemotron dataset to strengthen the
+    post-training stage.
 \end{itemize}
-Deviations from the milestone plan: we moved infrastructure from
-INT8 on one GPU to BF16 with vLLM tensor-parallel $=2$ on $2\times$
-A40 for throughput; we tested SC at $k=8$ rather than the planned
-$k\in\{3,5\}$, found no gain, and shipped $k=3$ for cost; GRPO
-ran with reduced group size and shorter completions because of
-single-box memory; we added a longer-reasoning ablation late, and
-it underperformed, so it was dropped.
 
 \paragraph{Team Responsibilities.}
 \begin{itemize}
-    \item \textbf{Ketan Mittal} --- grader analysis and prompt
-    design; sampling-parameter sweep; final private run,
-    bug-fix, and submission pipeline.
-    \item \textbf{Anirudh Annabathula} --- inference infrastructure
-    (vLLM TP=2, BF16); GRPO training setup.
-    \item \textbf{Kaii Bijlani} --- dataset analysis; Claude-based
-    gold-answer filter for the GRPO training set;
-    self-consistency.
-\end{itemize}
-
-\paragraph{Timelines.}
-\begin{itemize}
-    \item \textbf{Week 2:} Formed team; reproduced the starter
-    notebook locally.
-    \item \textbf{Week 3:} Read \texttt{judger.py}; identified the
-    $10^{-8}$ tolerance and contiguous-boxed-group behaviors.
-    \item \textbf{Week 4:} Drafted the grader-aware system prompt
-    on a 20-question dev subset; first Kaggle submission (0.515 public / 0.459 private).
-    \item \textbf{Week 5:} Submitted milestone report.
-    \item \textbf{Week 6:} Moved inference to BF16 + vLLM TP=2 on
-    $2\times$A40; ran the 24-config sampling sweep.
-    \item \textbf{Week 7:} Ran self-consistency at $k=8$ on the
-    eval slice and found it neutral.
-    \item \textbf{Week 8:} Built the Claude-based gold-answer
-    filter; produced \texttt{public\_filtered.jsonl}.
-    \item \textbf{Week 9:} Ran GRPO LoRA training
-    ($\approx 14$ hours, 561 steps); fixed two engineering issues;
-    uploaded the adapter to \texttt{k1mittal/cse151b-grpo-lora};
-    ran the full 943-item private run with SC $k=3$ + GRPO adapter;
-    caught and fixed the context-budget bug; final submission scored
-    0.699 public (rank 42/105) / 0.627 private (rank 27/105); ran
-    the longer-reasoning ablation (0.692 public / 0.612 private,
-    not selected).
-    \item \textbf{Week 10:} Wrote up the final report.
+    \item \textbf{Ketan Mittal} --- grader analysis, prompt
+    design, sampling-parameter sweep, final private run,
+    bug-fixes, and the submission pipeline.
+    \item \textbf{Anirudh Annabathula} --- inference
+    infrastructure (vLLM TP$=2$, BF16 on $2\times$A40), GRPO
+    training setup on the GPUs, and the presentation.
+    \item \textbf{Kaii Bijlani} --- dataset analysis, the
+    Claude-based answer filter over the public set, and the
+    presentation.
 \end{itemize}
 
 
